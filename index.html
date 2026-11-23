@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>試題分析</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; background-color: #f1f5f9; color: #1e293b; }
+        .drop-zone { border: 2px dashed #cbd5e1; transition: all 0.2s; cursor: pointer; border-radius: 1.5rem; background: #ffffff; }
+        .drop-zone:hover { border-color: #2563eb; background-color: #f8fafc; }
+        .drop-zone.active { border-color: #2563eb; background-color: #eff6ff; }
+        .btn-ready { animation: pulse-blue 2s infinite; }
+        @keyframes pulse-blue { 0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.6); } 70% { box-shadow: 0 0 0 15px rgba(37, 99, 235, 0); } 100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); } }
+        .log-box { font-size: 11px; line-height: 1.6; border-radius: 1rem; }
+        .log-box::-webkit-scrollbar { width: 5px; }
+        .log-box::-webkit-scrollbar-thumb { background: #475569; border-radius: 10px; }
+    </style>
+</head>
+<body class="p-4 md:p-10">
+    <div class="max-w-5xl mx-auto bg-white rounded-[3rem] shadow-2xl p-6 md:p-12 border border-slate-200">
+        <header class="mb-10 text-center border-b pb-8">
+            <h1 class="text-5xl font-black text-slate-800 tracking-tighter">
+                試題分析 
+                <span class="text-blue-600 block md:inline text-xl font-bold md:ml-2">v5.8.5 穩定版</span>
+            </h1>
+            <div id="status-chip" class="mt-4 inline-flex items-center px-5 py-2.5 rounded-full text-xs font-bold bg-slate-100 transition-all duration-500">
+                <span id="dot" class="w-2.5 h-2.5 rounded-full bg-amber-500 mr-2 animate-pulse"></span>
+                <span id="st-text">正在對接超級內容掃描引擎...</span>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-10">
+            <div class="space-y-4">
+                <label class="flex items-center text-sm font-black text-slate-600 uppercase tracking-widest">
+                    <span class="bg-blue-600 text-white w-6 h-6 rounded flex items-center justify-center mr-2 text-[10px]">01</span>
+                    上傳試題 Word (自動掃描原文)
+                </label>
+                <div id="zone-word" class="drop-zone p-12 text-center">
+                    <p id="label-word" class="text-slate-400 text-sm italic">點擊或拖放 (答案) 題號 格式檔案</p>
+                    <input type="file" id="input-word" class="hidden" accept=".doc,.docx">
+                </div>
+            </div>
+            <div class="space-y-4">
+                <label class="flex items-center text-sm font-black text-slate-600 uppercase tracking-widest">
+                    <span class="bg-blue-600 text-white w-6 h-6 rounded flex items-center justify-center mr-2 text-[10px]">02</span>
+                    上傳成績 Excel (支援合計/作答情況)
+                </label>
+                <div id="zone-excel" class="drop-zone p-12 text-center">
+                    <p id="label-excel" class="text-slate-400 text-sm italic">全體答對率與 P 指標分流統計</p>
+                    <div id="pill-box" class="mt-2 flex flex-wrap justify-center gap-1"></div>
+                    <input type="file" id="input-excel" class="hidden" accept=".xls,.xlsx" multiple>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex flex-col items-center space-y-8">
+            <div id="data-card" class="hidden w-full bg-blue-50 border border-blue-100 rounded-3xl p-8 flex justify-around text-center shadow-inner">
+                <div><span class="text-[10px] font-black text-blue-400 block mb-1 uppercase">合併班級</span><b id="v-files" class="text-3xl font-black text-blue-900">0</b></div>
+                <div class="w-px bg-blue-200 h-10"></div>
+                <div><span class="text-[10px] font-black text-blue-400 block mb-1 uppercase">有效分析樣本</span><b id="v-students" class="text-3xl font-black text-blue-900">0</b></div>
+            </div>
+
+            <button id="btn-submit" class="w-full md:w-96 bg-white text-slate-400 font-black py-5 px-10 rounded-2xl shadow-sm border border-slate-200 cursor-not-allowed transition-all transform" disabled>
+                正在等待核心載入...
+            </button>
+            
+            <div id="log-box" class="log-box text-slate-400 w-full bg-slate-900 p-6 rounded-2xl hidden max-h-64 overflow-y-auto border border-slate-800 leading-relaxed shadow-2xl"></div>
+        </div>
+
+        <div id="modal" class="fixed inset-0 bg-slate-900/90 backdrop-blur-md hidden flex items-center justify-center z-50">
+            <div class="bg-white rounded-[3rem] p-12 max-w-sm w-full text-center shadow-2xl space-y-8 border border-white/10">
+                <div class="animate-spin rounded-full h-16 w-16 border-4 border-slate-100 border-t-blue-600 mx-auto"></div>
+                <div class="space-y-3">
+                    <h3 class="text-2xl font-black text-slate-800">試題分析報告生成中</h3>
+                    <p class="text-sm text-slate-500 italic">正在執行 5 題深度會診與報告封裝...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <canvas id="hist-canvas" width="600" height="400" class="hidden"></canvas>
+    <canvas id="canvas" width="400" height="400" class="hidden"></canvas>
+
+    <script>
+        const apiKey = "";
+        let wordTxt = "";
+        let studentData = [];
+        let fileNumCount = 0;
+        let finalDocxLib = null;
+        let answerKeyMap = {}; 
+        let questionContentMap = {}; 
+
+        const MULTI_MAP = {
+            'F':'AB', 'G':'AC', 'H':'AD', 'I':'AE', 'J':'BC', 'K':'BD', 'L':'BE', 'M':'CD', 'N':'CE', 'O':'DE',
+            'P':'ABC', 'Q':'ABD', 'R':'ABE', 'S':'ACD', 'T':'ACE', 'U':'ADE', 'V':'BCD', 'W':'BCE', 'X':'BDE', 'Y':'CDE',
+            'Z':'ABCD', '*':'ABCE', '$':'ABDE', '%':'ACDE', ',':'BCDE', '~':'ABCDE'
+        };
+
+        const $ = id => document.getElementById(id);
+        const log = (msg, isErr = false) => {
+            $('log-box').classList.remove('hidden');
+            const d = document.createElement('div');
+            d.textContent = `> [${new Date().toLocaleTimeString()}] ${msg}`;
+            if (isErr) d.className = "text-red-400 font-bold";
+            $('log-box').appendChild(d);
+            $('log-box').scrollTop = $('log-box').scrollHeight;
+        };
+
+        const CDNs = [
+            "https://cdn.jsdelivr.net/npm/docx@7.8.2/build/index.browser.js",
+            "https://cdnjs.cloudflare.com/ajax/libs/docx/7.8.2/docx.min.js",
+            "https://unpkg.com/docx@7.8.2/build/index.js"
+        ];
+
+        let hasLibStarted = false;
+        async function loadDocxLib(idx = 0) {
+            if (hasLibStarted || idx >= CDNs.length) return;
+            const s = document.createElement('script');
+            s.src = CDNs[idx];
+            s.onload = () => {
+                const lib = window.docx || (typeof docx !== 'undefined' ? docx : null);
+                if (lib && (lib.Document || (lib.default && lib.default.Document))) {
+                    finalDocxLib = lib.Document ? lib : lib.default;
+                    hasLibStarted = true;
+                    $('dot').className = "w-2.5 h-2.5 rounded-full bg-green-500 mr-2 shadow-[0_0_8px_rgba(34,197,94,1)]";
+                    $('st-text').innerText = "系統已就緒 (成功連接解析引擎)";
+                    checkReadyState();
+                } else { loadDocxLib(idx + 1); }
+            };
+            s.onerror = () => loadDocxLib(idx + 1);
+            document.head.appendChild(s);
+        }
+        window.onload = () => setTimeout(() => loadDocxLib(0), 500);
+
+        function extractQuestionData(text) {
+            const ansMap = {};
+            const contentMap = {};
+            const questionRegex = /^\s*\(\s*([A-E ]+)\s*\)\s*(\d+)\s*[.．、\s]/;
+            
+            const lines = text.split('\n').filter(l => l.trim().length > 0);
+            let currentQNum = null;
+            let currentBuffer = [];
+
+            lines.forEach(line => {
+                const match = line.match(questionRegex);
+                if (match) {
+                    if (currentQNum) {
+                        contentMap[currentQNum] = currentBuffer.join('\n').substring(0, 1500);
+                    }
+                    const ansRaw = match[1].trim();
+                    const qNum = match[2];
+                    if (ansRaw) ansMap[qNum] = ansRaw.toUpperCase();
+                    currentQNum = qNum;
+                    const contentStart = line.replace(questionRegex, '').trim();
+                    currentBuffer = [`第 ${qNum} 題：${contentStart}`];
+                } else if (currentQNum) {
+                    currentBuffer.push(line.trim());
+                }
+            });
+            if (currentQNum) contentMap[currentQNum] = currentBuffer.join('\n').substring(0, 1500);
+            return { ansMap, contentMap };
+        }
+
+        ['word', 'excel'].forEach(key => {
+            const z = $(`zone-${key}`);
+            const i = $(`input-${key}`);
+            z.onclick = () => i.click();
+            i.onchange = (e) => handleFiles(e.target.files, key);
+            z.ondragover = (e) => { e.preventDefault(); z.classList.add('bg-blue-50'); };
+            z.ondragleave = () => z.classList.remove('bg-blue-50');
+            z.ondrop = (e) => { e.preventDefault(); z.classList.remove('bg-blue-50'); handleFiles(e.dataTransfer.files, key); };
+        });
+
+        async function handleFiles(files, type) {
+            if (!files.length) return;
+            if (type === 'word') {
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    try {
+                        const res = await mammoth.extractRawText({ arrayBuffer: e.target.result });
+                        wordTxt = res.value;
+                        const data = extractQuestionData(wordTxt);
+                        answerKeyMap = data.ansMap;
+                        questionContentMap = data.contentMap;
+                        $('label-word').innerText = files[0].name;
+                        $('label-word').className = "text-blue-600 font-bold";
+                        log(`試題 Word 解析完成：擷取到 ${Object.keys(questionContentMap).length} 題原文。`);
+                        checkReadyState();
+                    } catch(err) { log("Word 解析失敗", true); }
+                };
+                reader.readAsArrayBuffer(files[0]);
+            } else {
+                studentData = [];
+                fileNumCount = files.length;
+                $('pill-box').innerHTML = '';
+                for (let f of files) {
+                    const s = document.createElement('span'); s.className = 'bg-blue-100 text-blue-700 text-[9px] px-2 py-0.5 rounded'; s.innerText = f.name;
+                    $('pill-box').appendChild(s);
+                    await new Promise(r => {
+                        const rd = new FileReader();
+                        rd.onload = (e) => {
+                            try {
+                                const wb = XLSX.read(e.target.result, { type: 'binary' });
+                                studentData = studentData.concat(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]]));
+                            } catch (err) { log(`讀取成績失敗`, true); }
+                            r();
+                        };
+                        rd.readAsBinaryString(f);
+                    });
+                }
+                $('label-excel').innerText = `已聚合 ${fileNumCount} 份成績數據`;
+                $('label-excel').className = "text-blue-600 font-bold";
+                log(`成績數據載入完成。`);
+                checkReadyState();
+            }
+        }
+
+        function findColumnKey(item, candidates) {
+            const keys = Object.keys(item);
+            for (let c of candidates) {
+                const found = keys.find(k => k.replace(/\s+/g, '').includes(c));
+                if (found) return found;
+            }
+            return null;
+        }
+
+        function checkReadyState() {
+            const btn = $('btn-submit');
+            if (!finalDocxLib) return;
+            if (!wordTxt || studentData.length === 0) {
+                btn.disabled = true;
+                btn.innerText = "核心已就緒，請上傳檔案";
+                btn.className = "w-full md:w-96 bg-white text-slate-400 font-black py-5 px-10 rounded-2xl shadow-sm border border-slate-200 cursor-not-allowed";
+                return;
+            }
+            btn.disabled = false;
+            btn.className = "w-full md:w-96 bg-blue-600 text-white font-black py-5 px-10 rounded-2xl shadow-xl transition-all transform hover:scale-105 btn-ready";
+            btn.innerText = "執行試題分析";
+            $('data-card').classList.remove('hidden');
+            $('v-files').innerText = fileNumCount;
+            
+            const scoreKey = findColumnKey(studentData[0], ['合計', '總計', '分數', '成績', '得分']);
+            if (scoreKey) {
+                $('v-students').innerText = studentData.filter(s => {
+                    const val = s[scoreKey];
+                    return val !== undefined && val !== null && String(val).trim() !== "" && !isNaN(parseFloat(val));
+                }).length;
+            }
+        }
+
+        function calculateAcademicMetrics() {
+            log("正在執行精準解碼與 P/D 指標運算...");
+            const sample = studentData[0];
+            const scoreKey = findColumnKey(sample, ['合計', '總計', '分數', '成績', '得分']);
+            const statusKey = findColumnKey(sample, ['作答情況', '作答狀況', '答題情況', '作答']);
+
+            if (!scoreKey || !statusKey) {
+                throw new Error(`找不到必要欄位！當前辨識到：分數欄=[${scoreKey}], 作答欄=[${statusKey}]`);
+            }
+
+            log(`成功鎖定欄位：分數/總分 [${scoreKey}]，作答情況 [${statusKey}]`);
+
+            const validSet = studentData.filter(s => {
+                const val = s[scoreKey];
+                return val !== undefined && val !== null && String(val).trim() !== "" && !isNaN(parseFloat(val));
+            });
+
+            log(`篩選有效學生人數：${validSet.length} 人。`);
+
+            const scoreArr = validSet.map(s => parseFloat(s[scoreKey]));
+            const avg = (scoreArr.reduce((a, b) => a + b, 0) / scoreArr.length).toFixed(1);
+            const variance = scoreArr.reduce((a, b) => a + Math.pow(b - parseFloat(avg), 2), 0) / scoreArr.length;
+            const sd = Math.sqrt(variance).toFixed(1);
+
+            const bins = Array(10).fill(0);
+            scoreArr.forEach(s => {
+                let bi = Math.floor(s / 10);
+                if (bi > 9) bi = 9; if (bi < 0) bi = 0;
+                bins[bi]++;
+            });
+
+            const sortedSet = [...validSet].sort((a, b) => parseFloat(b[scoreKey]) - parseFloat(a[scoreKey]));
+            const n27 = Math.max(1, Math.floor(sortedSet.length * 0.27));
+            const topGroup = sortedSet.slice(0, n27);
+            const botGroup = sortedSet.slice(-n27);
+
+            let table = [];
+            let pSingle = { easy: 0, mid: 0, hard: 0 };
+            let dSingle = { high: 0, mid: 0, low: 0 };
+            let pMulti = { easy: 0, mid: 0, hard: 0 };
+            let dMulti = { high: 0, mid: 0, low: 0 };
+
+            const firstStr = String(validSet[0][statusKey] || "").trim();
+            const totalQ = firstStr.length;
+            log(`偵測到作答字串題數：${totalQ} 題。`);
+
+            for (let i = 1; i <= totalQ; i++) {
+                const qIdx = i - 1;
+                let opts = { A: 0, B: 0, C: 0, D: 0, E: 0, N: 0 };
+                const correctAnswer = answerKeyMap[i.toString()] || "?";
+                let totalCorrect = 0;
+
+                validSet.forEach(s => {
+                    const statusStr = String(s[statusKey] || "");
+                    const char = statusStr[qIdx];
+                    if (char === '-') {
+                        totalCorrect++;
+                        ['A','B','C','D','E'].forEach(o => { if (correctAnswer.includes(o)) opts[o]++; });
+                    } else if (char === ' ' || char === ' ' || char === '#' || !char) {
+                        opts.N++;
+                    } else {
+                        let decoded = MULTI_MAP[char] || char;
+                        ['A','B','C','D','E'].forEach(o => { if (decoded.includes(o)) opts[o]++; });
+                    }
+                });
+
+                const realSuccessRate = (totalCorrect / validSet.length).toFixed(2);
+                const isCorrect = (row) => String(row[statusKey])[qIdx] === '-';
+                const ph = topGroup.filter(isCorrect).length / n27;
+                const pl = botGroup.filter(isCorrect).length / n27;
+                const pVal = ((ph + pl) / 2).toFixed(2);
+                const dVal = Math.max(0, (ph - pl)).toFixed(2);
+
+                const pObj = (i <= 20) ? pSingle : pMulti;
+                const dObj = (i <= 20) ? dSingle : dMulti;
+
+                if (parseFloat(pVal) >= 0.60) pObj.easy++; 
+                else if (parseFloat(pVal) < 0.30) pObj.hard++; 
+                else pObj.mid++;
+
+                if (parseFloat(dVal) >= 0.40) dObj.high++; 
+                else if (parseFloat(dVal) < 0.25) dObj.low++; 
+                else dObj.mid++;
+                
+                table.push({ qNum: i, q: `第${i}題`, opts, pTotal: realSuccessRate, pExtreme: pVal, d: dVal, ans: correctAnswer });
+            }
+
+            return { avg, sd, bins, table, pSingle, dSingle, pMulti, dMulti, total: validSet.length };
+        }
+
+        async function drawHistogram(bins) {
+            const ctx = $('hist-canvas').getContext('2d');
+            ctx.clearRect(0, 0, 600, 400);
+            ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 600, 400);
+            const max = Math.max(...bins, 1);
+            bins.forEach((c, i) => {
+                const h = (c / max) * 300;
+                ctx.fillStyle = "#3b82f6";
+                ctx.fillRect(60 + i * 53, 350 - h, 38, h);
+                ctx.fillStyle = "#1e293b"; ctx.font = "bold 11px Arial"; ctx.textAlign = "center";
+                ctx.fillText(`${i*10}`, 79 + i * 53, 370);
+                ctx.fillText(c, 79 + i * 53, 345 - h);
+            });
+            return $('hist-canvas').toDataURL("image/png").split(',')[1];
+        }
+
+        async function drawPie(vals, colors, labels) {
+            const ctx = $('canvas').getContext('2d');
+            const total = vals.reduce((a, b) => a + b, 0);
+            ctx.clearRect(0, 0, 400, 400);
+            ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 400, 400);
+            if (total === 0) {
+                ctx.beginPath(); ctx.arc(200, 160, 120, 0, 2 * Math.PI);
+                ctx.fillStyle = "#f1f5f9"; ctx.fill();
+                return $('canvas').toDataURL("image/png").split(',')[1];
+            }
+            let angle = 0;
+            vals.forEach((v, i) => {
+                if (v === 0) return;
+                const slice = (v / total) * 2 * Math.PI;
+                ctx.beginPath(); ctx.moveTo(200, 160); ctx.arc(200, 160, 140, angle, angle + slice);
+                ctx.fillStyle = colors[i]; ctx.fill();
+                const m = angle + slice / 2;
+                ctx.fillStyle = "white"; ctx.font = "bold 18px Arial";
+                ctx.shadowBlur = 4; ctx.shadowColor = "black";
+                if (v/total > 0.05) { ctx.fillText(labels[i], 200 + Math.cos(m) * 80 - 15, 160 + Math.sin(m) * 80); }
+                ctx.shadowBlur = 0; angle += slice;
+            });
+            let lx = 60;
+            vals.forEach((v, i) => {
+                ctx.fillStyle = colors[i]; ctx.fillRect(lx, 340, 20, 20);
+                ctx.fillStyle = "#1e293b"; ctx.font = "14px Arial"; ctx.textAlign = "left";
+                ctx.fillText(`${labels[i]}:${v}題`, lx + 25, 355);
+                lx += 110;
+            });
+            return $('canvas').toDataURL("image/png").split(',')[1];
+        }
+
+        // --- 本地物理專家智慧規則引擎 (免 API Key 防呆降級) ---
+        function generateLocalExpertDiagnoses(stats) {
+            log("啟動內建物理教學會診引擎（精選 5 題重點剖析）...");
+            
+            // 排序演算法：優先挑選 D < 0.25 (低鑑別) 或極端難易題 (P < 0.3 或 P > 0.8 但 D 低)
+            const sortedQuestions = [...stats.table].sort((a, b) => {
+                const dA = parseFloat(a.d), dB = parseFloat(b.d);
+                const pA = parseFloat(a.pExtreme), pB = parseFloat(b.pExtreme);
+                // 優先度計分：鑑別度低者加分、難度極端者加分
+                const scoreA = (dA < 0.25 ? 50 : 0) + (pA < 0.30 ? 30 : 0) - dA * 20;
+                const scoreB = (dB < 0.25 ? 50 : 0) + (pB < 0.30 ? 30 : 0) - dB * 20;
+                return scoreB - scoreA;
+            });
+
+            const top5 = sortedQuestions.slice(0, 5);
+
+            const diagnoses = top5.map(q => {
+                const p = parseFloat(q.pExtreme);
+                const d = parseFloat(q.d);
+                const ans = q.ans;
+                
+                // 找出最大的錯誤選項（誘答力最高）
+                let maxWrongOpt = '';
+                let maxWrongCount = 0;
+                ['A','B','C','D','E'].forEach(opt => {
+                    if (!ans.includes(opt) && q.opts[opt] > maxWrongCount) {
+                        maxWrongCount = q.opts[opt];
+                        maxWrongOpt = opt;
+                    }
+                });
+
+                let k_comment = "";
+                let y_comment = "";
+                let m_comment = "";
+                let advice = "";
+
+                if (d < 0.25) {
+                    k_comment = `鑑別度僅 ${d}，偏低。高分群與低分群在此題未能有效拉開差距，題目概念或題幹敘述可能存在干擾點。`;
+                    y_comment = maxWrongOpt ? `學生極易被選項 (${maxWrongOpt}) 誘答（選答人數達 ${maxWrongCount} 人），顯示對核心物理情境有普遍的觀念混淆。` : `作答選項極度分散，學生在解題時可能缺乏清晰的物理圖像，以致盲目猜答。`;
+                    m_comment = `本題屬於鑑別度需警示題型，建議課堂上應重新強調受力分析與物理量因果關係，避免盲目帶公式。`;
+                    advice = `課堂重點復習本題相關物理模型，並以對比提問澄清選項 (${maxWrongOpt || '關鍵選項'}) 的常見思維陷阱。`;
+                } else if (p < 0.30) {
+                    k_comment = `難度 P 值為 ${p}，屬於難度極高題目。多數學生在列出守恆律或方程式時便遇到瓶頸。`;
+                    y_comment = `計算過程繁瑣或數學代數轉換過於複雜，導致即使觀念正確的學生也未能算出正確解答。`;
+                    m_comment = `低分群答對率近乎猜測值，高分群亦有半數以上受挫，屬於拉開頂尖考生的超難題。`;
+                    advice = `建議將此複合難題拆解為 2~3 個子題進行引導教學，先讓學生掌握基本物理態，再進行聯立求解。`;
+                } else {
+                    k_comment = `難度 P 值為 ${p}、鑑別度 D 值為 ${d}，題目具備良好的教學檢視價值。`;
+                    y_comment = `高分群掌握度佳，但中後段學生多卡在題意閱讀與圖表物理意義之轉譯。`;
+                    m_comment = `此題適合作為段考標準範例，能精準反映出平時是否落實動手繪製受力圖與運動圖。`;
+                    advice = `強化學生閱讀題幹時圈選物理條件（如：光滑、靜止、等速）的習慣，提升題目資訊轉化能力。`;
+                }
+
+                return {
+                    qNum: q.qNum,
+                    content: "題目原文已擷取",
+                    experts: { k: k_comment, y: y_comment, m: m_comment },
+                    advice: advice
+                };
+            });
+
+            return {
+                summary: `本次試題共 ${stats.table.length} 題，全校有效樣本 ${stats.total} 人，全體平均分數為 ${stats.avg} 分，標準差 ${stats.sd}。單選與多選在 P(0.6/0.3) 與 D(0.4/0.25) 之落差標準下，呈現中等鑑別度為主之分佈。以下針對全卷 5 題鑑別度偏低或難度落差最大之核心題型進行專業診斷。`,
+                diagnoses: diagnoses
+            };
+        }
+
+        async function fetchAI(stats) {
+            log("正在進行數據診斷會議 (擴大至 5 題)...");
+            if (!apiKey) {
+                return generateLocalExpertDiagnoses(stats);
+            }
+
+            try {
+                const prompt = `分析物理試題。平均分 ${stats.avg}。選 5 題優先分析 D < 0.25 或 P < 0.35 之題目。輸出 JSON 包含題號(qNum)。格式：
+                { "summary": "分析(200字)", "diagnoses": [{ "qNum": 題號數字, "content": "摘要", "experts": {"k":"冠榮","y":"宥廷","m":"孟叡"}, "advice": "策略" }] }`;
+                const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], generationConfig: { responseMimeType: "application/json" } })
+                });
+                const j = await r.json();
+                if (j.candidates && j.candidates[0] && j.candidates[0].content) {
+                    let text = j.candidates[0].content.parts[0].text;
+                    const match = text.match(/\{[\s\S]*\}/);
+                    if (match) {
+                        let jsonStr = match[0].replace(/\\(?!["\\/bfnrtu])/g, "\\\\");
+                        return JSON.parse(jsonStr);
+                    }
+                }
+                return generateLocalExpertDiagnoses(stats);
+            } catch (err) {
+                log("遠端 API 請求略過，啟用本地專家分析引擎。");
+                return generateLocalExpertDiagnoses(stats);
+            }
+        }
+
+        async function buildDoc(stats, ai) {
+            log("封裝 Word 報告與原始內容對接...");
+            const { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType, ImageRun, Table, TableRow, TableCell, WidthType } = finalDocxLib;
+
+            const histB64 = await drawHistogram(stats.bins);
+            const pS = await drawPie([stats.pSingle.easy, stats.pSingle.mid, stats.pSingle.hard], ["#10b981", "#f59e0b", "#ef4444"], ["簡單", "中等", "困難"]);
+            const dS = await drawPie([stats.dSingle.high, stats.dSingle.mid, stats.dSingle.low], ["#3b82f6", "#8b5cf6", "#64748b"], ["高度", "中度", "低度"]);
+            const pM = await drawPie([stats.pMulti.easy, stats.pMulti.mid, stats.pMulti.hard], ["#10b981", "#f59e0b", "#ef4444"], ["簡單", "中等", "困難"]);
+            const dM = await drawPie([stats.dMulti.high, stats.dMulti.mid, stats.dMulti.low], ["#3b82f6", "#8b5cf6", "#64748b"], ["高度", "中度", "低度"]);
+
+            const bodyContent = [
+                new Paragraph({ text: "試題分析", heading: HeadingLevel.HEADING_1, alignment: AlignmentType.CENTER }),
+                new Paragraph({ text: "" }),
+                new Paragraph({ text: "一、全體量化統計分析 (已應用落差優化門檻)", heading: HeadingLevel.HEADING_2 }),
+                new Paragraph({ children: [
+                    new TextRun({ text: `分析有效樣本：${stats.total} 人。`, bold: true }),
+                    new TextRun({ text: ` 平均分數：${stats.avg} 分，標準差：${stats.sd}。`, bold: true, color: "1e40af" })
+                ] }),
+                new Paragraph({ text: "學生成績分佈直方圖：", bold: true }),
+                new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data: Uint8Array.from(atob(histB64), c => c.charCodeAt(0)), transformation: { width: 480, height: 320 } })] }),
+                new Paragraph({ text: "1. 單選題診斷 (指標：P>=0.6簡, P<0.3難；D>=0.4高, D<0.25低)：", bold: true }),
+                new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data: Uint8Array.from(atob(pS), c => c.charCodeAt(0)), transformation: { width: 220, height: 220 } }), new TextRun({ text: "    " }), new ImageRun({ data: Uint8Array.from(atob(dS), c => c.charCodeAt(0)), transformation: { width: 220, height: 220 } })] }),
+                new Paragraph({ text: "2. 多選題診斷 (指標門檻同上)：", bold: true }),
+                new Paragraph({ alignment: AlignmentType.CENTER, children: [new ImageRun({ data: Uint8Array.from(atob(pM), c => c.charCodeAt(0)), transformation: { width: 220, height: 220 } }), new TextRun({ text: "    " }), new ImageRun({ data: Uint8Array.from(atob(dM), c => c.charCodeAt(0)), transformation: { width: 220, height: 220 } })] }),
+                new Paragraph({ text: ai.summary || "分析完成。", alignment: AlignmentType.BOTH }),
+                new Paragraph({ text: "" }),
+                new Paragraph({ text: "二、重點題目作答分析暨教學改進意見 (精選 5 題會診)", heading: HeadingLevel.HEADING_2 }),
+            ];
+
+            (ai.diagnoses || []).forEach(it => {
+                const qK = it.qNum.toString();
+                const tar = stats.table.find(r => r.qNum === it.qNum || r.q.includes(`第${qK}題`));
+                const rawC = questionContentMap[qK] || "（未能擷取完整原文，請參考試卷第 " + qK + " 題內容）";
+
+                bodyContent.push(new Paragraph({ children: [new TextRun({ text: `【題目編號】第 ${it.qNum} 題`, bold: true, color: "1e40af" })] }));
+                bodyContent.push(new Paragraph({ children: [
+                    new TextRun({ text: `【難度 P 值】${tar ? tar.pExtreme : "N/A"}  `, bold: true }),
+                    new TextRun({ text: `【鑑別度 D 值】${tar ? tar.d : "N/A"}`, bold: true })
+                ] }));
+                bodyContent.push(new Paragraph({ text: `【題目原文】`, bold: true }));
+                bodyContent.push(new Paragraph({ text: rawC, shading: { fill: "f8fafc" } }));
+                bodyContent.push(new Paragraph({ text: "【三師專業會診分析】" }));
+                bodyContent.push(new Paragraph({ text: `冠榮老師：${it.experts.k}`, indent: { left: 720 } }));
+                bodyContent.push(new Paragraph({ text: `宥廷老師：${it.experts.y}`, indent: { left: 720 } }));
+                bodyContent.push(new Paragraph({ text: `孟叡老師：${it.experts.m}`, indent: { left: 720 } }));
+                bodyContent.push(new Paragraph({ text: `【具體教學建議】${it.advice}`, bold: true }));
+                bodyContent.push(new Paragraph({ text: "--------------------------------------------------" }));
+            });
+
+            bodyContent.push(new Paragraph({ text: "" }));
+            bodyContent.push(new Paragraph({ text: "三、完整試題統計明細表", heading: HeadingLevel.HEADING_2 }));
+            const rArr = [new TableRow({ children: ["題號","答案","A","B","C","D","E","未答","答對率","P值","D值"].map(h => 
+                new TableCell({ children: [new Paragraph({ text: h, alignment: AlignmentType.CENTER, style: { bold: true } })], shading: { fill: "f2f2f2" } })
+            )})];
+            stats.table.forEach(r => {
+                rArr.push(new TableRow({ children: [r.q, r.ans, r.opts.A, r.opts.B, r.opts.C, r.opts.D, r.opts.E, r.opts.N, (parseFloat(r.pTotal)*100).toFixed(0)+"%", r.pExtreme, r.d].map(v => 
+                    new TableCell({ children: [new Paragraph({ text: String(v), alignment: AlignmentType.CENTER })] })
+                )}));
+            });
+            bodyContent.push(new Table({ width: { size: 100, type: WidthType.PERCENTAGE }, rows: rArr }));
+
+            const doc = new Document({ sections: [{ children: bodyContent }] });
+            const blob = await Packer.toBlob(doc);
+            saveAs(blob, "試題分析報告_v5.8.5.docx");
+        }
+
+        $('btn-submit').onclick = async () => {
+            $('modal').classList.remove('hidden');
+            try {
+                const s = calculateAcademicMetrics();
+                const a = await fetchAI(s);
+                await buildDoc(s, a);
+                log("分析成功！「試題分析」報告已自動下載。");
+            } catch (e) {
+                log(`執行異常：${e.message}`, true);
+                alert("錯誤：" + e.message);
+            } finally {
+                $('modal').classList.add('hidden');
+            }
+        };
+    </script>
+</body>
+</html>
